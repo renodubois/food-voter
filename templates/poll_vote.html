@@ -1,0 +1,12 @@
+<html>
+	<body>
+		<!-- TODO: Validation to make sure a) every option gets filled, b) each number is selected only once -->
+		<form action='post'>
+				{{ $numOptions := len .Options }}
+				{{ range $val := .Options }}
+				<input type='number' min=1 max={{$numOptions}} name='option-{{$val}}' /><label for='option-{{$val}}'>{{$val}}</label><br />
+				{{end}}
+			<input type='submit' value='Vote'>
+		</form>
+	</body>
+</html>

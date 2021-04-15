@@ -1,7 +1,6 @@
 package main
 
-import ( "fmt"
-	 "log"
+import ( "log"
 	 "io"
 	 "net/http"
 	 "html/template"
@@ -11,6 +10,14 @@ import ( "fmt"
 	 "math/rand"
 	 "time"
 )
+
+type pollRow struct {
+	Id int
+	Options []string
+	CreatorSlug string
+	VoterSlug string
+}
+
 
 func isValidSlug(slug string) bool {
 	log.Printf("Slug: %s", slug)
@@ -41,14 +48,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if (r.Method == "" || r.Method == "GET") {
 		if (len(path) == 0) {
 			// index
-			t, _ := template.ParseFiles("index.html")
+			t, _ := template.ParseFiles("templates/index.html")
 			t.Execute(w, nil)
 			return
 		} else if (isValidSlug(path)) {
 			// get info about page
 			// load
-			getPoll(path)
-			fmt.Fprintf(w, "Other Pages")
+			pollInfo := getPoll(path)
+			// at this point, poll is a voting poll
+			t, err := template.ParseFiles("templates/poll_vote.html")
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = t.Execute(w, pollInfo)
+			if err != nil {
+				log.Fatal(err)
+			}
 			return
 		}
 		http.Error(w, "404: Not Found", 404)
@@ -67,7 +82,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			// create slug, redirect to slug
 			makeNewPoll(options)
 			// Make a poll
-			t, _ := template.ParseFiles("poll.html")
+			t, _ := template.ParseFiles("templates/poll_view.html")
 			t.Execute(w, options)
 			return
 		} else {
@@ -99,18 +114,20 @@ func makeSlug () string {
 	return result
 }
 
-func getPoll(slug string) {
-	query := "SELECT * FROM poll WHERE voter_slug='?';"
+
+func getPoll(slug string) pollRow {
+	query := "SELECT * FROM poll WHERE voter_slug='"+slug+"'"
 	db, err := sql.Open("sqlite3", "food_voter.db")
 	if err != nil {
 		log.Println("error when connecting to db")
 		log.Fatal(err)
-		return
+		return pollRow{}
 	}
 	defer db.Close()
-	rows, db_err := db.Query(query, slug)
+	rows, db_err := db.Query(query)
 	if db_err != nil {
 		log.Fatal(db_err)
+		return pollRow{}
 	}
 	for rows.Next() {
 		// variables for the row
@@ -123,18 +140,20 @@ func getPoll(slug string) {
 		if err := rows.Scan(&id, &options, &creatorSlug, &voterSlug); err != nil {
 			log.Fatal(err)
 		}
-		log.Println(options)
+		formattedOptions := optionsStringToSlice(options)
+		res := pollRow{id, formattedOptions, creatorSlug, voterSlug}
+		return res
 	}
-	log.Println(query)
+	return pollRow{}
 }
 
 func makeNewPoll(options []string) bool {
 	// make slug
-	creator_slug := makeSlug()
-	voter_slug := makeSlug()
-	options_string := strings.Join(options, ",")
+	creatorSlug := makeSlug()
+	voterSlug := makeSlug()
+	optionsString := strings.Join(options, ",")
 	// insert into DB
-	query := "INSERT INTO poll (options, creator_slug, voter_slug) VALUES ('" + options_string + "', '" + creator_slug + "', '" + voter_slug + "');"
+	query := "INSERT INTO poll (options, creator_slug, voter_slug) VALUES ('" + optionsString + "', '" + creatorSlug + "', '" + voterSlug + "');"
 	db, err := sql.Open("sqlite3", "food_voter.db")
 	if err != nil {
 		log.Println("error when connecting to db")
@@ -149,6 +168,8 @@ func makeNewPoll(options []string) bool {
 		log.Fatal(db_err)
 		return false
 	}
+	log.Println("Voter: " + voterSlug)
+	log.Println("Creator: " + creatorSlug)
 	return true
 }
 
@@ -170,6 +191,10 @@ func parseBody(body string) []string {
 		return options
 	}
 	return make([]string, 0)
+}
+
+func optionsStringToSlice (options string) []string {
+	return strings.Split(options, ",")
 }
 
 func main() {
