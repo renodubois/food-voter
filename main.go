@@ -18,6 +18,10 @@ type pollRow struct {
 	VoterSlug string
 }
 
+type creatorInfo struct {
+	Id int
+	Options []string
+}
 
 func isValidSlug(slug string) bool {
 	log.Printf("Slug: %s", slug)
@@ -43,68 +47,17 @@ func isValidSlug(slug string) bool {
 	return true
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path[1:]
-	if (r.Method == "" || r.Method == "GET") {
-		if (len(path) == 0) {
-			// index
-			t, _ := template.ParseFiles("templates/index.html")
-			t.Execute(w, nil)
-			return
-		} else if (isValidSlug(path)) {
-			// get info about page
-			// load
-			pollInfo := getPoll(path)
-			// at this point, poll is a voting poll
-			t, err := template.ParseFiles("templates/poll_vote.html")
-			if err != nil {
-				log.Fatal(err)
-			}
-			err = t.Execute(w, pollInfo)
-			if err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-		http.Error(w, "404: Not Found", 404)
-		return
-	} else if (r.Method == "POST") {
-		// Handle submits
-		if (strings.HasPrefix(path, "submit-poll")) {
-			// TODO: poll submitting
-			return
-		} else if (strings.HasPrefix(path, "create-poll")) {
-			body, _ := io.ReadAll(r.Body)
-			log.Println(string(body))
-			options := parseBody(string(body))
-			log.Println(options)
-			// create poll in DB
-			// create slug, redirect to slug
-			makeNewPoll(options)
-			// Make a poll
-			t, _ := template.ParseFiles("templates/poll_view.html")
-			t.Execute(w, options)
-			return
-		} else {
-			http.Error(w, "Bad Request", 400)
-		}
-	} else {
-		http.Error(w, "Bad Request", 400)
-		return
-	}
-}
-
-func makeSlug () string {
+func makeSlug (extraSeed int64) string {
 	// reno's propreitary slug format (rpsf)
 	// sections are of length 6, can be a-Z,0-9
 	// there are 6 sections
 	result := ""
 	charset := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 	charset_len := len(charset)
-	rand.Seed(time.Now().UnixNano())
+	r := rand.New(rand.NewSource(time.Now().UnixNano() + extraSeed))
 	for i := 0; i < 6; i++ {
 		for j := 0; j < 6; j++ {
-			result += string(charset[rand.Intn(charset_len)])
+			result += string(charset[r.Intn(charset_len)])
 		}
 		if (i == 5) {
 			continue
@@ -116,7 +69,7 @@ func makeSlug () string {
 
 
 func getPoll(slug string) pollRow {
-	query := "SELECT * FROM poll WHERE voter_slug='"+slug+"'"
+	query := "SELECT * FROM poll WHERE voter_slug='"+slug+"' OR creator_slug='"+slug+"'"
 	db, err := sql.Open("sqlite3", "food_voter.db")
 	if err != nil {
 		log.Println("error when connecting to db")
@@ -149,8 +102,8 @@ func getPoll(slug string) pollRow {
 
 func makeNewPoll(options []string) bool {
 	// make slug
-	creatorSlug := makeSlug()
-	voterSlug := makeSlug()
+	creatorSlug := makeSlug(10)
+	voterSlug := makeSlug(100)
 	optionsString := strings.Join(options, ",")
 	// insert into DB
 	query := "INSERT INTO poll (options, creator_slug, voter_slug) VALUES ('" + optionsString + "', '" + creatorSlug + "', '" + voterSlug + "');"
@@ -195,6 +148,113 @@ func parseBody(body string) []string {
 
 func optionsStringToSlice (options string) []string {
 	return strings.Split(options, ",")
+}
+
+func resultsStringToSlice (resultString string) []int {
+
+}
+
+func getResults (pollID int) []int {
+	query := "SELECT results FROM result WHERE poll_id=" + pollID + ";"
+	db, err := sql.Open("sqlite3", "food_voter.db")
+	if err != nil {
+		log.Println("error when connecting to db")
+		log.Fatal(err)
+		return []
+	}
+	defer db.Close()
+	rows, db_err := db.Query(query)
+	if db_err != nil {
+		log.Fatal(db_err)
+		return []
+	}
+	for rows.Next() {
+		// variables for the row
+		var results string
+		if err := rows.Scan(&results); err != nil {
+			log.Fatal(err)
+		}
+		res := pollRow{id, formattedOptions, creatorSlug, voterSlug}
+		return res
+	}
+
+}
+
+func calcResultsBorda (votes []int) map[int]int {
+	numOptions := len(votes[0])
+	pointValue := numOptions * 10
+	results := make(map[int]int)
+	for res := range(votes) {
+		// votes are _in order_, from most preferred to least preferred.
+		results[res] += pointValue
+		pointValue -= 10
+	}
+	return results
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path[1:]
+	if (r.Method == "" || r.Method == "GET") {
+		if (len(path) == 0) {
+			// index
+			t, _ := template.ParseFiles("templates/index.html")
+			t.Execute(w, nil)
+			return
+		} else if (isValidSlug(path)) {
+			// get info about page
+			// load
+			pollInfo := getPoll(path)
+			// check to see which slug matches
+			if pollInfo.CreatorSlug == path {
+				// POLL CREATOR
+				t, err := template.ParseFiles("templates/poll_view.html")
+				if err != nil {
+					// TODO: Display error page instead of exiting
+					log.Fatal(err)
+				}
+				err = t.Execute(w, pollInfo)
+				return
+			} else if pollInfo.VoterSlug == path {
+				// POLL VOTER
+				t, err := template.ParseFiles("templates/poll_vote.html")
+				if err != nil {
+					// TODO: Display error page instead of exiting
+					log.Fatal(err)
+				}
+				err = t.Execute(w, pollInfo)
+				if err != nil {
+					// TODO: Display error page instead of exiting
+					log.Fatal(err)
+				}
+				return
+			}
+		}
+		http.Error(w, "404: Not Found", 404)
+		return
+	} else if (r.Method == "POST") {
+		// Handle submits
+		if (strings.HasPrefix(path, "submit-poll")) {
+			// TODO: poll submitting
+			return
+		} else if (strings.HasPrefix(path, "create-poll")) {
+			body, _ := io.ReadAll(r.Body)
+			log.Println(string(body))
+			options := parseBody(string(body))
+			log.Println(options)
+			// create poll in DB
+			// create slug, redirect to slug
+			makeNewPoll(options)
+			// Make a poll
+			t, _ := template.ParseFiles("templates/poll_view.html")
+			t.Execute(w, options)
+			return
+		} else {
+			http.Error(w, "Bad Request", 400)
+		}
+	} else {
+		http.Error(w, "Bad Request", 400)
+		return
+	}
 }
 
 func main() {
